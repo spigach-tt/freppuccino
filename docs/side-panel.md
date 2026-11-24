@@ -80,6 +80,7 @@ Ids are strings: a primitive's Rhino object id (GUID), or a CSG node's name (`N3
 | `setOperation {id, op, k, preview?}` | ✅ edit a node live. `preview: true` = drag tick, applied without undo; the next non-preview one ends the gesture as one undo step |
 | `setNodeParam {id, name, value, preview?}` | ✅ edit a twist/bend/repeat param; same preview/commit gesture as `setOperation` |
 | `deleteNodes {ids}` | ✅ nodes still used by other nodes are kept |
+| `moveNode {id, from, to, index?}` | ✅ tree drag: detach `id` from node `from` (null: it is a root) and insert it into `to` at `index` (null `to`: make it a root). `to` must be a union, subtract, or intersect; cycles and emptied nodes are refused with a notice. One "Move in tree" undo step |
 | `setColor {id, color, preview?}` | ✅ write `SDF.Color` (`"#RRGGBB"`) on a primitive; same preview/commit gesture as `setOperation` (one "F-rep color" undo step per picker drag) |
 | `setParam {id, name, value, preview?}` | ✅ write `SDF.<name>` on a primitive and rebuild its proxy brep (`PrimitiveProxy`); same preview/commit gesture as `setOperation` (one "Edit F-rep parameter" undo step per drag). Sizes must be > 0 (cone radii ≥ 0). sdUser also takes `L` (> 0) and `u.<param>` (declared in the code, any finite value); both written round-trip exact, always stored |
 | `aiTool {callId, tool, args, source?}` | ✅ AI agent tool call (`Ai/AiTools.cs`), see [ai.md](ai.md). The Script tab sends the same calls with `source: "script"` (undo label "Script: …" instead of "AI: …") |

@@ -170,6 +170,8 @@ public sealed record SetNodeParamRequest(string Id, string Name, double Value, b
 /// With <see cref="Deep"/>, the node and every node and primitive under it are removed.
 public sealed record DeleteNodesRequest(string[] Ids, bool Deep = false);
 
+public sealed record MoveNodeRequest(string Id, string? From = null, string? To = null, int? Index = null);
+
 /// AI agent tool call (Ai/AiTools.cs); answered with an AiToolResultMessage carrying the same CallId.
 public sealed record AiToolRequest(string CallId, string Tool, JsonElement? Args = null, string? Source = null);
 

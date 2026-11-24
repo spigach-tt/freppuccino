@@ -1,5 +1,5 @@
 import { Code2, Sparkles, X } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent, type RefObject } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -40,6 +40,16 @@ export default function App() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
+
+  const inspectorRef = useRef<HTMLDivElement>(null)
+  const [inspectorHeight, setInspectorHeight] = useState<number | null>(() => {
+    const saved = Number(localStorage.getItem(INSPECTOR_HEIGHT_KEY))
+    return saved > 0 ? saved : null
+  })
+  useEffect(() => {
+    if (inspectorHeight === null) localStorage.removeItem(INSPECTOR_HEIGHT_KEY)
+    else localStorage.setItem(INSPECTOR_HEIGHT_KEY, String(Math.round(inspectorHeight)))
+  }, [inspectorHeight])
 
   const labels = useMemo(() => labelNodes(scene), [scene])
   const byId = useMemo(() => indexNodes(scene), [scene])
@@ -106,7 +116,12 @@ export default function App() {
           />
         </ScrollArea>
 
-        <div className="max-h-[65%] shrink-0 overflow-y-auto border-t bg-card">
+        <Splitter height={inspectorHeight} setHeight={setInspectorHeight} pane={inspectorRef} />
+        <div
+          ref={inspectorRef}
+          className={cn('shrink-0 overflow-y-auto bg-card', inspectorHeight === null && 'max-h-[65%]')}
+          style={inspectorHeight === null ? undefined : { height: inspectorHeight, maxHeight: `calc(100% - ${RESERVED_ABOVE}px)` }}
+        >
           <Inspector
             selected={selected}
             labels={labels}
@@ -126,6 +141,58 @@ export default function App() {
       </div>
 
       <NoticeToast />
+    </div>
+  )
+}
+
+const INSPECTOR_HEIGHT_KEY = 'freppuccino.inspectorHeight'
+const MIN_PANE = 72
+const RESERVED_ABOVE = 112
+
+function Splitter(props: { height: number | null; setHeight: (h: number | null) => void; pane: RefObject<HTMLDivElement | null> }) {
+  const start = useRef<{ y: number; h: number; max: number } | null>(null)
+
+  const limits = () => {
+    const pane = props.pane.current
+    const column = pane?.parentElement
+    if (!pane || !column) return null
+    return { h: pane.offsetHeight, max: Math.max(MIN_PANE, column.clientHeight - RESERVED_ABOVE) }
+  }
+
+  const clamp = (h: number, max: number) => Math.min(Math.max(h, MIN_PANE), max)
+
+  return (
+    <div
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label="Resize browser and inspector"
+      tabIndex={0}
+      title="Drag to resize. Double-click to reset."
+      onPointerDown={(e: PointerEvent<HTMLDivElement>) => {
+        const l = limits()
+        if (!l || e.button !== 0) return
+        e.currentTarget.setPointerCapture(e.pointerId)
+        start.current = { y: e.clientY, h: l.h, max: l.max }
+      }}
+      onPointerMove={(e) => {
+        const s = start.current
+        if (s) props.setHeight(clamp(s.h + s.y - e.clientY, s.max))
+      }}
+      onPointerUp={(e) => {
+        start.current = null
+        e.currentTarget.releasePointerCapture(e.pointerId)
+      }}
+      onDoubleClick={() => props.setHeight(null)}
+      onKeyDown={(e: ReactKeyboardEvent<HTMLDivElement>) => {
+        if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
+        const l = limits()
+        if (!l) return
+        e.preventDefault()
+        props.setHeight(clamp(l.h + (e.key === 'ArrowUp' ? 16 : -16), l.max))
+      }}
+      className="group relative z-10 -my-1 h-2 shrink-0 cursor-row-resize touch-none outline-none"
+    >
+      <div className="pointer-events-none absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-border transition-[height,background-color] group-hover:h-0.5 group-hover:bg-primary group-focus-visible:h-0.5 group-focus-visible:bg-ring group-active:h-0.5 group-active:bg-primary" />
     </div>
   )
 }

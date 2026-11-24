@@ -466,6 +466,9 @@ public sealed class UiController : IDisposable
                 case "deleteNodes":
                     DeleteNodes(doc, Parse<DeleteNodesRequest>(message));
                     break;
+                case "moveNode":
+                    MoveNode(doc, Parse<MoveNodeRequest>(message));
+                    break;
                 case "aiTool":
                     RunAiTool(doc, Parse<AiToolRequest>(message));
                     break;
@@ -831,6 +834,32 @@ public sealed class UiController : IDisposable
         uint record = undo && !doc.UndoRecordingIsActive ? doc.BeginUndoRecord("F-rep color") : 0;
         doc.Objects.ModifyAttributes(obj, attributes, true);
         if (record != 0) doc.EndUndoRecord(record);
+        doc.Views.Redraw();
+    }
+
+    void MoveNode(RhinoDoc doc, MoveNodeRequest request)
+    {
+        var tree = FrepTrees.Get(doc);
+        if (ParseOperand(tree, request.Id) is not { } item) return;
+        int? from = request.From is { } f ? TryNode(tree, f, out var fid) ? fid : throw new JsonException($"unknown node '{f}'") : null;
+        int? to = request.To is { } t ? TryNode(tree, t, out var tid) ? tid : throw new JsonException($"unknown node '{t}'") : null;
+        if (from == null && to == null) return;
+        if (to is { } target && tree.Find(target)!.Op is not (FrepOp.Union or FrepOp.Intersect or FrepOp.Difference))
+        {
+            web.Send(new NoticeMessage("warning", "Drop onto a union, subtract, or intersect."));
+            return;
+        }
+        FrepTree next;
+        try
+        {
+            next = tree.Move(item, from, to, request.Index);
+        }
+        catch (ArgumentException ex)
+        {
+            web.Send(new NoticeMessage("warning", ex.Message));
+            return;
+        }
+        if (!ReferenceEquals(next, tree)) FrepTrees.Set(doc, next, "Move in tree");
         doc.Views.Redraw();
     }
 

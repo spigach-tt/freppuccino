@@ -1,5 +1,5 @@
 import { ChevronRight, Eye, EyeOff, Lock, Trash2, Ungroup } from 'lucide-react'
-import { useEffect, useState, type MouseEvent } from 'react'
+import { useEffect, useState, type DragEvent, type MouseEvent } from 'react'
 import { cn } from '@/lib/utils'
 import { NodeIcon } from '@/components/brand-icon'
 import { Input } from '@/components/ui/input'
@@ -28,6 +28,14 @@ export function SceneTree(props: {
       return next
     })
 
+  const [drag, setDrag] = useState<Drag | null>(null)
+  const [drop, setDrop] = useState<Drop | null>(null)
+  const endDrag = () => {
+    setDrag(null)
+    setDrop(null)
+  }
+  const dnd: Dnd = { drag, drop, setDrag, setDrop, endDrag }
+
   const [menu, setMenu] = useState<{ x: number; y: number; id: Id; operation: boolean } | null>(null)
   useEffect(() => {
     if (!menu) return
@@ -46,10 +54,43 @@ export function SceneTree(props: {
   return (
     <>
       <ul role="tree" aria-multiselectable className="py-1">
-        {props.nodes.map((node) => (
-          <TreeRow key={node.id} node={node} depth={0} {...props} collapsed={collapsed} onToggle={toggle} onDeleteMenu={setMenu} />
+        {props.nodes.map((node, i) => (
+          <TreeRow
+            key={node.id}
+            node={node}
+            depth={0}
+            {...props}
+            path={node.id}
+            parent={null}
+            index={i}
+            dnd={dnd}
+            collapsed={collapsed}
+            onToggle={toggle}
+            onDeleteMenu={setMenu}
+          />
         ))}
       </ul>
+      {drag?.from && (
+        <div
+          onDragOver={(e) => {
+            e.preventDefault()
+            e.dataTransfer.dropEffect = 'move'
+            if (drop?.zone !== 'root') setDrop({ path: '', zone: 'root' })
+          }}
+          onDragLeave={() => setDrop(null)}
+          onDrop={(e) => {
+            e.preventDefault()
+            send({ type: 'moveNode', id: drag.id, from: drag.from, to: null })
+            endDrag()
+          }}
+          className={cn(
+            'type-small mx-2 mb-2 grid h-9 place-items-center rounded-sm border border-dashed text-muted-foreground',
+            drop?.zone === 'root' && 'border-primary bg-accent/50 text-foreground',
+          )}
+        >
+          Move to top level
+        </div>
+      )}
       {menu && (
         <div
           role="menu"
@@ -87,9 +128,31 @@ export function SceneTree(props: {
   )
 }
 
+type Drag = { id: Id; from: Id | null; index: number; inside: Set<Id> }
+type Drop = { path: string; zone: 'before' | 'after' | 'into' | 'root' }
+type Dnd = {
+  drag: Drag | null
+  drop: Drop | null
+  setDrag: (d: Drag | null) => void
+  setDrop: (d: Drop | null) => void
+  endDrag: () => void
+}
+
+const isCombine = (n: SceneNode | null) => !n || n.op === 'union' || n.op === 'subtract' || n.op === 'intersect'
+
+function subtreeIds(node: SceneNode, into = new Set<Id>()): Set<Id> {
+  into.add(node.id)
+  node.children?.forEach((c) => subtreeIds(c, into))
+  return into
+}
+
 function TreeRow(props: {
   node: SceneNode
   depth: number
+  path: string
+  parent: SceneNode | null
+  index: number
+  dnd: Dnd
   labels: Map<string, string>
   selection: Set<Id>
   collapsed: Set<Id>
@@ -100,7 +163,7 @@ function TreeRow(props: {
   /** subtract operands after the first are tools */
   role?: 'tool'
 }) {
-  const { node, depth, selection, collapsed } = props
+  const { node, depth, selection, collapsed, parent, index, dnd } = props
   const hasChildren = !!node.children?.length
   const open = hasChildren && !collapsed.has(node.id)
   const selected = selection.has(node.id)
@@ -112,9 +175,67 @@ function TreeRow(props: {
     props.onSelect([node.id], mode)
   }
 
+  const zoneAt = (e: DragEvent<HTMLDivElement>, drag: Drag): Drop['zone'] | null => {
+    const r = e.currentTarget.getBoundingClientRect()
+    const y = (e.clientY - r.top) / r.height
+    const canInto = node.kind === 'operation' && isCombine(node) && !node.missing && !drag.inside.has(node.id)
+    const canBeside = isCombine(parent) && !(parent && drag.inside.has(parent.id)) && node.id !== drag.id
+    if (canInto && (!canBeside || (y > 0.25 && y < 0.75))) return 'into'
+    if (!canBeside) return null
+    return y < 0.5 ? 'before' : 'after'
+  }
+
+  const onDrop = (zone: Drop['zone'], drag: Drag) => {
+    if (zone === 'into') {
+      if (drag.from !== node.id) send({ type: 'moveNode', id: drag.id, from: drag.from, to: node.id })
+      return
+    }
+    const to = parent?.id ?? null
+    if (to === null) {
+      if (drag.from !== null) send({ type: 'moveNode', id: drag.id, from: drag.from, to: null })
+      return
+    }
+    let at = zone === 'before' ? index : index + 1
+    if (drag.from === to && drag.index < at) at--
+    if (drag.from === to && drag.index === at) return
+    send({ type: 'moveNode', id: drag.id, from: drag.from, to, index: at })
+  }
+
+  const dropZone = dnd.drop?.path === props.path ? dnd.drop.zone : null
+
   return (
     <li role="treeitem" aria-selected={selected} aria-expanded={hasChildren ? open : undefined}>
       <div
+        draggable={!node.missing}
+        onDragStart={(e) => {
+          if ((e.target as HTMLElement).closest('input')) return e.preventDefault()
+          e.stopPropagation()
+          e.dataTransfer.effectAllowed = 'move'
+          e.dataTransfer.setData('text/plain', node.id)
+          dnd.setDrag({ id: node.id, from: parent?.id ?? null, index, inside: subtreeIds(node) })
+        }}
+        onDragEnd={dnd.endDrag}
+        onDragOver={(e) => {
+          const zone = dnd.drag && zoneAt(e, dnd.drag)
+          if (!zone) {
+            if (dropZone) dnd.setDrop(null)
+            return
+          }
+          e.preventDefault()
+          e.stopPropagation()
+          e.dataTransfer.dropEffect = 'move'
+          if (dropZone !== zone) dnd.setDrop({ path: props.path, zone })
+        }}
+        onDragLeave={(e) => {
+          if (dropZone && !e.currentTarget.contains(e.relatedTarget as Node | null)) dnd.setDrop(null)
+        }}
+        onDrop={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          const zone = dnd.drag && zoneAt(e, dnd.drag)
+          if (dnd.drag && zone) onDrop(zone, dnd.drag)
+          dnd.endDrag()
+        }}
         onClick={onClick}
         onContextMenu={(e) => {
           if (!canDelete || (e.target as HTMLElement).closest('input')) return
@@ -123,13 +244,22 @@ function TreeRow(props: {
           props.onDeleteMenu({ x: e.clientX, y: e.clientY, id: node.id, operation: node.kind === 'operation' })
         }}
         className={cn(
-          'group mx-2 flex h-7 cursor-default items-center gap-1.5 rounded-sm pr-1 select-none hover:bg-accent/50',
+          'group relative mx-2 flex h-7 cursor-default items-center gap-1.5 rounded-sm pr-1 select-none hover:bg-accent/50',
           selected && 'bg-accent font-bold hover:bg-accent',
           !node.visible && 'text-muted-foreground [&_[data-slot=brand-icon]]:opacity-40',
           node.missing && 'italic line-through',
+          dnd.drag?.id === node.id && 'opacity-50',
+          dropZone === 'into' && 'bg-accent/50 ring-2 ring-primary ring-inset',
         )}
         style={{ paddingLeft: 4 + depth * 16 }}
       >
+        {(dropZone === 'before' || dropZone === 'after') && (
+          <span
+            aria-hidden
+            className={cn('pointer-events-none absolute right-0 h-0.5 rounded-full bg-primary', dropZone === 'before' ? '-top-px' : '-bottom-px')}
+            style={{ left: 4 + depth * 16 }}
+          />
+        )}
         <button
           type="button"
           aria-label={open ? 'Collapse' : 'Expand'}
@@ -170,6 +300,9 @@ function TreeRow(props: {
               {...props}
               node={child}
               depth={depth + 1}
+              path={`${props.path}/${i}:${child.id}`}
+              parent={node}
+              index={i}
               role={node.op === 'subtract' && i > 0 ? 'tool' : undefined}
             />
           ))}

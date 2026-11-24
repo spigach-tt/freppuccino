@@ -207,6 +207,27 @@ export function createMockHost(): Transport {
         emit({ type: 'selection', ids: selection })
         break
       }
+      case 'moveNode': {
+        const item = flat(scene).find((x) => x.id === m.id)
+        if (!item || (m.from === null && m.to === null)) break
+        if (m.to !== null && flat([item]).some((x) => x.id === m.to)) {
+          emit({ type: 'notice', level: 'warning', text: `${m.to} can't go inside itself.` })
+          break
+        }
+        const detached = m.from === null
+          ? scene.filter((x) => x.id !== m.id)
+          : map(scene, (x) => (x.id === m.from ? { ...x, children: x.children?.filter((c) => c.id !== m.id) } : x))
+        scene = m.to === null
+          ? [...detached, item]
+          : map(detached, (x) => {
+              if (x.id !== m.to) return x
+              const children = [...(x.children ?? [])]
+              children.splice(m.index ?? children.length, 0, item)
+              return { ...x, children }
+            })
+        emit({ type: 'scene', scene })
+        break
+      }
       case 'aiTool': {
         let reply: HostMessage
         try {
